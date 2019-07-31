@@ -1,17 +1,20 @@
 
+import math
 import random
+import sys
 import time
 
-MIN_HORIZONTAL_ROOM_SIZE =  6
-MIN_VERTICAL_RO0M_SIZE =    6
+MIN_HORIZONTAL_ROOM_SIZE =  5
+MIN_VERTICAL_RO0M_SIZE =    5
 
-MAX_HORIZONTAL_ROOM_SIZE =  12
-MAX_VERTICAL_ROOM_SIZE =    12
+MAX_HORIZONTAL_ROOM_SIZE =  6
+MAX_VERTICAL_ROOM_SIZE =    6
 
-WORLD_SIZE_HORIZONTAL = 48
-WORLD_SIZE_VERTICAL =   48
+WORLD_SIZE_HORIZONTAL =     48
+WORLD_SIZE_VERTICAL =       48
 
-ROOM_COUNT = 10
+ROOM_COUNT =                8
+MAX_DOORS_PER_ROOM =        3
 
 LEFT =      0
 TOP =       1
@@ -19,13 +22,78 @@ RIGHT =     2
 BOTTOM =    3
 
 def _2da(x, y, v):
-    return [[v for a in range(x)] for b in range(y)]
+    return [[v] * x for b in range(y)]
 
 def intersectRect(ba, bb):
     return not (ba[LEFT] > bb[RIGHT] or ba[RIGHT] < bb[LEFT] or ba[TOP] > bb[BOTTOM] or ba[BOTTOM] < bb[TOP])
 
+def center(room):
+    return (round(room[LEFT] + ((room[RIGHT] - room[LEFT]) / 2)), round(room[TOP] + ((room[BOTTOM] - room[TOP]) / 2)))
+
+# Euclidean distance
+def distE(a, b):
+    centerA = center(a)
+    centerB = center(b)
+
+    x = a[0] - b[0]
+    y = a[1] - b[1]
+
+    return math.sqrt(x**2 + y**2)
+
+# Manhatten distance
+def distM(a, b):
+    centerA = center(a)
+    centerB = center(b)
+
+    x = a[0] - b[0]
+    y = a[1] - b[1]
+
+    return abs(x) + abs(y)
+
+def getDist(line):
+    return line[2]
+
+def find(parents, room):
+    if parents[room] == room:
+        return room
+    return find(parents, parents[room])
+
+def union(parents, ranks, a, b):
+    aroot = find(parents, a)
+    broot = find(parents, b)
+
+    if ranks[aroot] == ranks[broot]:
+        parents[broot] = aroot
+        ranks[aroot] += 1
+    elif ranks[aroot] < ranks[broot]:
+        parents[aroot] = broot
+    elif ranks[aroot] > ranks[broot]:
+        parents[broot] = aroot
+
+def firstElem(x):
+    return x[0]
+
+def incr(x):
+    return x + 1
+
+def decr(x):
+    return x - 1
+
+def same(x):
+    return x
+
+def fill(world, tile, startY, endY, startX, endX):
+    for y in range(startY, endY):
+        for x in range(startX, endX):
+            world[y][x] = tile
+
 def main():
-    world = _2da(WORLD_SIZE_HORIZONTAL, WORLD_SIZE_VERTICAL, '#')
+    world = _2da(WORLD_SIZE_HORIZONTAL, WORLD_SIZE_VERTICAL, 'X')
+    seed = 1337420#8467846949062932899#random.randrange(sys.maxsize)#9202260135446286199#1337420
+    print(f"Seed for reproductive purposes (heheh): {seed}")
+    random.seed(seed)
+    #random.seed(1337420)
+    # Step 1: Room generation
     
     rooms = [None for a in range(ROOM_COUNT)]
     
@@ -42,7 +110,7 @@ def main():
             # right
             endx = min(startx + random.randrange(MIN_HORIZONTAL_ROOM_SIZE, MAX_HORIZONTAL_ROOM_SIZE), WORLD_SIZE_HORIZONTAL)
             # bottom
-            endy = min(starty + random.randrange(MIN_HORIZONTAL_ROOM_SIZE, MAX_HORIZONTAL_ROOM_SIZE), WORLD_SIZE_HORIZONTAL)
+            endy = min(starty + random.randrange(MIN_VERTICAL_RO0M_SIZE, MAX_VERTICAL_ROOM_SIZE), WORLD_SIZE_VERTICAL)
             
             currentRoom = (startx, starty, endx, endy)
             
@@ -60,26 +128,149 @@ def main():
             attempt = False
             
             rooms[ri] = currentRoom
+
+            #print(f"#{ri}: {currentRoom}")
             
-            for x in range(startx, endx):
-                for y in range(starty, endy):
-                    tile = '@'
-                    if x == startx or x == endx - 1 or y == starty or y == endy - 1:
-                        tile = '*'
-                    world[x][y] = tile
+            fill(world, chr(ri + 97), starty, endy, startx, endx)
     
-    t1 = time.time_ns()
-    elapsed = (t1 - t0) / 1000
+    # Step 2: Kruskal's Algorithm
     
-    print(f"That took {elapsed} ms")
+    allPaths = []
     
     for ri in range(ROOM_COUNT):
-        print(rooms[ri])
+        for ri0 in range(ri + 1, ROOM_COUNT):
+            p = (ri, ri0, distM(rooms[ri], rooms[ri0]))
+            allPaths.append(p)
     
-    for x in range(0, WORLD_SIZE_HORIZONTAL):
-        for y in range(0, WORLD_SIZE_VERTICAL):
-            print(world[x][y], end = "")
+    allPaths.sort(key=getDist)
+
+    parents = [i for i in range(ROOM_COUNT)]
+    ranks = [0] * ROOM_COUNT
+    paths = []
+    doorsPerRoom = [0] * ROOM_COUNT
+    
+    for p in allPaths:
+        if doorsPerRoom[p[0]] == MAX_DOORS_PER_ROOM or doorsPerRoom[p[1]] == MAX_DOORS_PER_ROOM:
+            continue
+        if find(parents, p[0]) != find(parents, p[1]):
+            paths.append(p)
+            union(parents, ranks, p[0], p[1])
+            doorsPerRoom[p[0]] += 1
+            doorsPerRoom[p[1]] += 1
+    
+    '''print("Final tree:")
+    for p in paths:
+        print(p)
+    
+    print(doorsPerRoom)'''
+    
+    # Step 3: Build Paths
+    
+    for p in paths:
+        startRoom = rooms[p[0]]
+        endRoom = rooms[p[1]]
         
-        print()
+        #print(f"Processing path for {chr(p[0] + 97)} and {chr(p[1] + 97)}")
+        
+        horiTStart = max(startRoom[TOP], endRoom[TOP])
+        horiTEnd = min(startRoom[BOTTOM], endRoom[BOTTOM])
+        
+        vertTStart = max(startRoom[LEFT], endRoom[LEFT])
+        vertTEnd = min(startRoom[RIGHT], endRoom[RIGHT])
+        
+        tunnelTile = '@'
+        
+        # vertical tunnel
+        startY = 0
+        endY = 0
+        tunnelX = 0
+        
+        # horizontal tunnel
+        startX = 0
+        startX = 0
+        tunnelY = 0
+        
+        if horiTStart < horiTEnd:
+            # Make a horizontal tunnel
+            
+            if startRoom[LEFT] > endRoom[LEFT]:
+                startX = endRoom[RIGHT]
+                endX = startRoom[LEFT]
+            else:
+                startX = startRoom[RIGHT]
+                endX = endRoom[LEFT]
+            
+            tunnelY = random.randrange(horiTStart, horiTEnd)
+            
+            fill(world, tunnelTile, tunnelY, tunnelY + 1, startX, endX)
+            
+        elif vertTStart < vertTEnd:
+            # Make a vertical tunnel
+            if startRoom[TOP] > endRoom[TOP]:
+                startY = endRoom[BOTTOM]
+                endY = startRoom[TOP]
+            else:
+                startY = startRoom[BOTTOM]
+                endY = endRoom[TOP]
+            
+            tunnelX = random.randrange(vertTStart, vertTEnd)
+            
+            fill(world, tunnelTile, startY, endY, tunnelX, tunnelX + 1)
+            
+        # If we can't do a direct tunnel in one direction
+        else:
+            startVertical = random.random() > 0.5
+            #print(f"Start vertical: {startVertical}")
+            
+            startRY = random.randrange(startRoom[TOP] + 1, startRoom[BOTTOM] - 1)
+            startRX = random.randrange(startRoom[LEFT] + 1, startRoom[RIGHT] - 1)
+            endRY = random.randrange(endRoom[TOP] + 1, endRoom[BOTTOM] - 1)
+            endRX = random.randrange(endRoom[LEFT] + 1, endRoom[RIGHT] - 1)
+            
+            # From the starting room, we're making a vertical tunnel
+            if startVertical:
+                startY = min(startRoom[BOTTOM], endRY)
+                endY = max(startRoom[TOP], endRY)
+                tunnelX = startRX
+                
+                startX = min(endRoom[RIGHT], tunnelX)
+                endX = max(endRoom[LEFT], startRX + 1)
+                tunnelY = endRY
+                
+            # Or maybe not
+            else:
+                startX = min(startRoom[RIGHT], endRX)
+                endX = max(startRoom[LEFT], endRX)
+                tunnelY = startRY
+                
+                startY = min(endRoom[BOTTOM], tunnelY)
+                endY = max(endRoom[TOP], startRY + 1)
+                tunnelX = endRX
+                
+            # vertical tunnel
+            fill(world, tunnelTile, startY, endY, tunnelX, tunnelX + 1)
+            # horizontal tunnel
+            fill(world, tunnelTile, tunnelY, tunnelY + 1, startX, endX)
+    
+    # Final step: Present
+    
+    t1 = time.time_ns()
+    elapsed = (t1 - t0) / 1000000
+    
+    print(f"That took {elapsed} ms")
+
+    print("\t\t", end = "")
+    
+    for i in range(0, int(WORLD_SIZE_HORIZONTAL / 8)):
+        print(f"{i*8}\t", end = "")
+    print()
+    print("\t\t", end = "")
+    for i in range(0, int(WORLD_SIZE_HORIZONTAL / 8)):
+        print("|\t", end = "")
+    
+    print()
+    
+    for y in range(0, WORLD_SIZE_VERTICAL):
+        print(f"{y}\t\t" + ''.join(world[y]))
 
 main()
