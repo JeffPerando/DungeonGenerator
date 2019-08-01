@@ -7,13 +7,13 @@ import time
 MIN_HORIZONTAL_ROOM_SIZE =  5
 MIN_VERTICAL_RO0M_SIZE =    5
 
-MAX_HORIZONTAL_ROOM_SIZE =  8
-MAX_VERTICAL_ROOM_SIZE =    8
+MAX_HORIZONTAL_ROOM_SIZE =  8#6
+MAX_VERTICAL_ROOM_SIZE =    8#6
 
 WORLD_SIZE_HORIZONTAL =     128#48
 WORLD_SIZE_VERTICAL =       128#48
 
-ROOM_COUNT =                96#8
+ROOM_COUNT =                96#16
 MAX_DOORS_PER_ROOM =        3
 
 LEFT =      0
@@ -25,13 +25,13 @@ def _2da(x, y, v):
     return [[v] * x for b in range(y)]
 
 def intersectRect(ba, bb):
-    return not (ba[LEFT] > bb[RIGHT] or ba[RIGHT] < bb[LEFT] or ba[TOP] > bb[BOTTOM] or ba[BOTTOM] < bb[TOP])
+    return not (ba[LEFT] > bb[RIGHT] or ba[RIGHT] < bb[LEFT] or \
+                ba[TOP] > bb[BOTTOM] or ba[BOTTOM] < bb[TOP])
 
 def center(room):
     return (round(room[LEFT] + ((room[RIGHT] - room[LEFT]) / 2)), round(room[TOP] + ((room[BOTTOM] - room[TOP]) / 2)))
 
-# Euclidean distance
-def distE(a, b):
+def distEuclid(a, b):
     centerA = center(a)
     centerB = center(b)
 
@@ -40,8 +40,7 @@ def distE(a, b):
 
     return math.sqrt(x**2 + y**2)
 
-# Manhatten distance
-def distM(a, b):
+def distManhatten(a, b):
     centerA = center(a)
     centerB = center(b)
 
@@ -50,8 +49,8 @@ def distM(a, b):
 
     return abs(x) + abs(y)
 
-def getDist(line):
-    return line[2]
+def getPathDist(path):
+    return path[2]
 
 def find(parents, room):
     if parents[room] == room:
@@ -73,28 +72,22 @@ def union(parents, ranks, a, b):
 def firstElem(x):
     return x[0]
 
-def incr(x):
-    return x + 1
-
-def decr(x):
-    return x - 1
-
-def same(x):
-    return x
-
 def fill(world, tile, startY, endY, startX, endX):
     for y in range(startY, endY):
         for x in range(startX, endX):
             world[y][x] = tile
 
-def fillLineH(world, tile, startX, endX, yPos, firstTile = '', lastTile = ''):
-    start = 0
+def fillLineH(world, tile, startX, endX, yPos, firstTile = None, lastTile = None):
+    if firstTile == None:
+        firstTile = tile
+    if lastTile == None:
+        lastTile = tile
     end = endX - startX - 1
     count = 0
     for x in range(startX, endX):
-        tileUsed = firstTile
-        if count > start:
-            tileUsed = tile
+        tileUsed = tile
+        if count == 0:
+            tileUsed = firstTile
         if count == end:
             tileUsed = lastTile
         world[yPos][x] = tileUsed
@@ -105,26 +98,50 @@ def fillLineV(world, tile, startY, endY, xPos, firstTile = None, lastTile = None
         firstTile = tile
     if lastTile == None:
         lastTile = tile
-    start = 0
     end = endY - startY - 1
     count = 0
     for y in range(startY, endY):
-        tileUsed = firstTile
-        if count > start:
-            tileUsed = tile
+        tileUsed = tile
+        if count == 0:
+            tileUsed = firstTile
         if count == end:
             tileUsed = lastTile
         world[y][xPos] = tileUsed
         count += 1
 
+def intersectLineH(world, rooms, startX, endX, yPos, roomE, roomE2):
+    for ri in range(0, len(rooms)):
+        if ri == roomE or ri == roomE2:
+            continue
+        
+        room = rooms[ri]
+        
+        if not (startX > room[RIGHT] or endX < room[LEFT] or \
+                yPos > room[BOTTOM] or yPos < room[TOP]):
+            return True
+        
+    return False
+
+def intersectLineV(world, rooms, startY, endY, xPos, roomE, roomE2):
+    for ri in range(0, len(rooms)):
+        if ri == roomE or ri == roomE2:
+            continue
+        
+        room = rooms[ri]
+        
+        if not (xPos > room[RIGHT] or xPos < room[LEFT] or \
+                startY > room[BOTTOM] or endY < room[TOP]):
+            return True
+        
+    return False
+
 def main():
     world = _2da(WORLD_SIZE_HORIZONTAL, WORLD_SIZE_VERTICAL, 'X')
-    seed = 1337420  #8467846949062932899
-                    #random.randrange(sys.maxsize)
-                    #9202260135446286199#1337420
-    print(f"Seed for reproductive purposes (heheh): {seed}")
+    seed = 1337420
+    #random.randrange(sys.maxsize)
+    #print(f"Seed for reproductive purposes (heheh): {seed}")
     random.seed(seed)
-    #random.seed(1337420)
+    
     # Step 1: Room generation
     
     rooms = [None for a in range(ROOM_COUNT)]
@@ -134,36 +151,31 @@ def main():
     for ri in range(ROOM_COUNT):
         attempt = True
         while attempt:
-            # left
             startx = random.randrange(0, WORLD_SIZE_HORIZONTAL - MAX_HORIZONTAL_ROOM_SIZE)
-            # top
             starty = random.randrange(0, WORLD_SIZE_VERTICAL - MAX_VERTICAL_ROOM_SIZE)
+            endx = min(startx + random.randrange(MIN_HORIZONTAL_ROOM_SIZE, MAX_HORIZONTAL_ROOM_SIZE),
+                       WORLD_SIZE_HORIZONTAL)
+            endy = min(starty + random.randrange(MIN_VERTICAL_RO0M_SIZE, MAX_VERTICAL_ROOM_SIZE),
+                       WORLD_SIZE_VERTICAL)
             
-            # right
-            endx = min(startx + random.randrange(MIN_HORIZONTAL_ROOM_SIZE, MAX_HORIZONTAL_ROOM_SIZE), WORLD_SIZE_HORIZONTAL)
-            # bottom
-            endy = min(starty + random.randrange(MIN_VERTICAL_RO0M_SIZE, MAX_VERTICAL_ROOM_SIZE), WORLD_SIZE_VERTICAL)
-            
+            #               LEFT, TOP, RIGHT, BOTTOM
             currentRoom = (startx, starty, endx, endy)
             
             if ri > 0:
                 intersection = False
                 for i in range(0, ri):
-                    otherRoom = rooms[i]
-                    
-                    if intersectRect(currentRoom, otherRoom):
+                    if intersectRect(currentRoom, rooms[i]):
                         intersection = True
                         break
+                
                 if intersection:
                     continue
             
             attempt = False
-            
             rooms[ri] = currentRoom
-
-            #print(f"#{ri}: {currentRoom}")
-            
             fill(world, ' ', starty, endy, startx, endx)
+    
+    '''for r in rooms: print(r)'''
     
     # Step 2: Kruskal's Algorithm
     
@@ -171,10 +183,10 @@ def main():
     
     for ri in range(ROOM_COUNT):
         for ri0 in range(ri + 1, ROOM_COUNT):
-            p = (ri, ri0, distM(rooms[ri], rooms[ri0]))
+            p = (ri, ri0, distManhatten(rooms[ri], rooms[ri0]))
             allPaths.append(p)
     
-    allPaths.sort(key=getDist)
+    allPaths.sort(key=getPathDist)
     
     parents = [i for i in range(ROOM_COUNT)]
     ranks = [0] * ROOM_COUNT
@@ -184,25 +196,20 @@ def main():
     for p in allPaths:
         if doorsPerRoom[p[0]] == MAX_DOORS_PER_ROOM or doorsPerRoom[p[1]] == MAX_DOORS_PER_ROOM:
             continue
+        # Could add a condition to check for intersecting rooms, but that would have
+        # limited use, and wouldn't be very practical. Not to mention make the code
+        # run significantly slower.
         if find(parents, p[0]) != find(parents, p[1]):
             paths.append(p)
             union(parents, ranks, p[0], p[1])
             doorsPerRoom[p[0]] += 1
             doorsPerRoom[p[1]] += 1
     
-    '''print("Final tree:")
-    for p in paths:
-        print(p)
-    
-    print(doorsPerRoom)'''
-    
     # Step 3: Build Paths
     
     for p in paths:
         startRoom = rooms[p[0]]
         endRoom = rooms[p[1]]
-        
-        #print(f"Processing path for {chr(p[0] + 97)} and {chr(p[1] + 97)}")
         
         horiTStart = max(startRoom[TOP], endRoom[TOP])
         horiTEnd = min(startRoom[BOTTOM], endRoom[BOTTOM])
@@ -224,8 +231,6 @@ def main():
         tunnelY = 0
         
         if horiTStart < horiTEnd:
-            # Make a horizontal tunnel
-            
             if startRoom[LEFT] > endRoom[LEFT]:
                 startX = endRoom[RIGHT]
                 endX = startRoom[LEFT]
@@ -234,11 +239,10 @@ def main():
                 endX = endRoom[LEFT]
             
             tunnelY = random.randrange(horiTStart, horiTEnd)
-
+            
             fillLineH(world, tunnelTile, startX, endX, tunnelY, doorTile, doorTile)
             
         elif vertTStart < vertTEnd:
-            # Make a vertical tunnel
             if startRoom[TOP] > endRoom[TOP]:
                 startY = endRoom[BOTTOM]
                 endY = startRoom[TOP]
@@ -250,83 +254,84 @@ def main():
             
             fillLineV(world, tunnelTile, startY, endY, tunnelX, doorTile, doorTile)
             
-        # If we can't do a direct tunnel in one direction
         else:
             startVertical = random.random() > 0.5
-            #print(f"Start vertical: {startVertical}")
-            
-            startRY = random.randrange(startRoom[TOP] + 1, startRoom[BOTTOM] - 1)
-            startRX = random.randrange(startRoom[LEFT] + 1, startRoom[RIGHT] - 1)
-            endRY = random.randrange(endRoom[TOP] + 1, endRoom[BOTTOM] - 1)
-            endRX = random.randrange(endRoom[LEFT] + 1, endRoom[RIGHT] - 1)
             
             vStartTile = tunnelTile
             vEndTile = tunnelTile
             hStartTile = tunnelTile
             hEndTile = tunnelTile
             
-            # From the starting room, we're making a vertical tunnel
-            if startVertical:
-                startY = min(startRoom[BOTTOM], endRY)
-                endY = max(startRoom[TOP], endRY)
-                tunnelX = startRX
-                
-                startX = min(endRoom[RIGHT], tunnelX)
-                endX = max(endRoom[LEFT], startRX + 1)
-                tunnelY = endRY
-                
-                if startY == startRoom[BOTTOM]:
-                    vStartTile = doorTile
-                if endY == startRoom[TOP]:
-                    vEndTile = doorTile
-                if startX == endRoom[RIGHT]:
-                    hStartTile = doorTile
-                if endX == endRoom[LEFT]:
-                    hEndTile = doorTile
+            attempts = 0
             
-            # Or maybe not
-            else:
-                startX = min(startRoom[RIGHT], endRX)
-                endX = max(startRoom[LEFT], endRX)
-                tunnelY = startRY
+            while attempts < 2:
+                startRY = random.randrange(startRoom[TOP] + 1, startRoom[BOTTOM] - 1)
+                startRX = random.randrange(startRoom[LEFT] + 1, startRoom[RIGHT] - 1)
+                endRY = random.randrange(endRoom[TOP] + 1, endRoom[BOTTOM] - 1)
+                endRX = random.randrange(endRoom[LEFT] + 1, endRoom[RIGHT] - 1)
                 
-                startY = min(endRoom[BOTTOM], tunnelY)
-                endY = max(endRoom[TOP], startRY + 1)
-                tunnelX = endRX
+                if startVertical:
+                    startY = min(startRoom[BOTTOM], endRY)
+                    endY = max(startRoom[TOP], endRY)
+                    tunnelX = startRX
+                    
+                    startX = min(endRoom[RIGHT], tunnelX)
+                    endX = max(endRoom[LEFT], startRX + 1)
+                    tunnelY = endRY
+                    
+                    vStartTile = doorTile if startY == startRoom[BOTTOM] else tunnelTile
+                    vEndTile = doorTile if endY == startRoom[TOP] else tunnelTile
+                    hStartTile = doorTile if startX == endRoom[RIGHT] else tunnelTile
+                    hEndTile = doorTile if endX == endRoom[LEFT] else tunnelTile
+                else:
+                    startX = min(startRoom[RIGHT], endRX)
+                    endX = max(startRoom[LEFT], endRX)
+                    tunnelY = startRY
+                    
+                    startY = min(endRoom[BOTTOM], tunnelY)
+                    endY = max(endRoom[TOP], startRY + 1)
+                    tunnelX = endRX
+                    
+                    vStartTile = doorTile if startY == endRoom[BOTTOM] else tunnelTile
+                    vEndTile = doorTile if endY == endRoom[TOP] else tunnelTile
+                    hStartTile = doorTile if startX == startRoom[RIGHT] else tunnelTile
+                    hEndTile = doorTile if endX == startRoom[LEFT] else tunnelTile
                 
-                if startY == endRoom[BOTTOM]:
-                    vStartTile = doorTile
-                if endY == endRoom[TOP]:
-                    vEndTile = doorTile
-                if startX == startRoom[RIGHT]:
-                    hStartTile = doorTile
-                if endX == startRoom[LEFT]:
-                    hEndTile = doorTile
+                if intersectLineV(world, rooms, startX, endX, tunnelY, p[0], p[1]) or \
+                   intersectLineH(world, rooms, startY, endY, tunnelX, p[0], p[1]):
+                    
+                    attempts += 1
+                    startVertical = not startVertical
+                    continue
+                # I would go ahead and cancel the tunnel if we can't find a non-intersecting path,
+                # but that would make parts of the map unobtainable without mining tools.
+                # So we just say 'sod it' and build the tunnel anyway.
+                break
             
-            # vertical tunnel
             fillLineV(world, tunnelTile, startY, endY, tunnelX, vStartTile, vEndTile)
-            # horizontal tunnel
             fillLineH(world, tunnelTile, startX, endX, tunnelY, hStartTile, hEndTile)
-    
+            
+        
     # Final step: Present
     
     t1 = time.time_ns()
     elapsed = (t1 - t0) / 1000000
     
-    print(f"That took {elapsed} ms")
+    print(f"{elapsed} +")
     
-    print("\t\t", end = "")
+    '''print("\t\t", end = "")
     
-    for i in range(0, int(WORLD_SIZE_HORIZONTAL / 8)):
-        print(f"{i*8}\t", end = "")
+    for i in range(0, int(WORLD_SIZE_HORIZONTAL / 4)):
+        print(f"{i*4}\t", end = "")
     print()
     print("\t\t", end = "")
-    for i in range(0, int(WORLD_SIZE_HORIZONTAL / 8)):
+    for i in range(0, int(WORLD_SIZE_HORIZONTAL / 4)):
         print("|\t", end = "")
     
     print()
     
     for y in range(0, WORLD_SIZE_VERTICAL):
-        print(f"{y}\t\t" + ''.join(world[y]))
-
-main()
+        # Double up the X axis so that things look more square
+        print(f"{y}\t\t" + ''.join([val for pair in zip(world[y], world[y]) for val in pair]))
+    '''
+for i in range(5): main()
