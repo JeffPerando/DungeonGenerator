@@ -1,4 +1,5 @@
 
+from copy import *
 from math import *
 
 import random
@@ -9,8 +10,8 @@ import time
 # Configuration #
 #################
 
-USE_CUSTOM_SEED     = False
-CUSTOM_SEED         = 1070403273516726580#1337420
+USE_CUSTOM_SEED     = True
+CUSTOM_SEED         = 1337420
 
 solidTile           = '#'
 roomTile            = '`'
@@ -19,22 +20,21 @@ doorTile            = 'O'
 bossWallTile        = '@'
 
 PRINT_TO_FILE       = False
-FILE_NAME           = "dungeonBossTest.txt"
+FILE_NAME           = "dungeonBossTest3.txt"
 
 MIN_ROOM_HEIGHT             = 3#5
 MIN_ROOM_WIDTH              = 3#5
 MAX_ROOM_HEIGHT             = 6#8
 MAX_ROOM_WIDTH              = 6#8
 
-MIN_BOSS_RADIUS             = 10.5
+MIN_BOSS_RADIUS             = 6.5
 MAX_BOSS_RADIUS             = 14.5
 
-WORLD_HEIGHT                = 48#128
-WORLD_WIDTH                 = 48#128
+WORLD_HEIGHT                = 48
+WORLD_WIDTH                 = 48
 
-ROOM_COUNT                  = 24#96
+ROOM_COUNT                  = 16#96
 MAX_DOORS_PER_ROOM          = 3
-
 
 BENCHMARK           = False
 BENCHMARK_RUNS      = 10
@@ -49,15 +49,21 @@ FEATURE_ROOM_DECOR  = True
 
 # Debugs dungeon generation itself. After generation,
 # the finished dungeon will be printed out in the console.
-DEBUG_GEN           = True
+PRINT_FINAL_DUNGEON         = True
+
+PRINT_AFTER_EVERY_ROOM      = False
+PRINT_AFTER_EVERY_PATH      = False
+
 # Debugs room generation. Will print a list of generated
 # rooms, specifically their bounds.
 DEBUG_ROOMS         = False
 # Debugs pathing between rooms. Prints off the finished
 # minimum weight spanning tree, and where paths are generated.
 DEBUG_KRUSKAL       = False
-# Prints when a path is generated
-DEBUG_PATHS         = False
+# Prints when a vertical path is generated
+DEBUG_V_PATHS       = False
+DEBUG_H_PATHS       = False
+DEBUG_D_PATHS       = False
 
 ##################
 # Program beyond #
@@ -70,17 +76,18 @@ TOP         = 1
 RIGHT       = 2
 BOTTOM      = 3
 
+# Helper functions
+
+# Creates a 2D array
 def _2da(x, y, v):
     return [[v] * x for b in range(y)]
 
-def intersectRect(ba, bb):
-    return not (ba[LEFT] > bb[RIGHT] or ba[RIGHT] < bb[LEFT] or \
-                ba[TOP] > bb[BOTTOM] or ba[BOTTOM] < bb[TOP])
-
+# Finds the center of a boundary
 def center(room):
     return (round(room[LEFT] + ((room[RIGHT] - room[LEFT]) / 2)),
             round(room[TOP] + ((room[BOTTOM] - room[TOP]) / 2)))
 
+# Distance algorithms
 def distEuclid(a, b):
     x = a[0] - b[0]
     y = a[1] - b[1]
@@ -88,13 +95,12 @@ def distEuclid(a, b):
     return sqrt(x**2 + y**2)
 
 def distManhatten(a, b):
-    centerA = center(a)
-    centerB = center(b)
-
-    x = centerA[0] - centerB[0]
-    y = centerA[1] - centerB[1]
+    x = a[0] - b[0]
+    y = a[1] - b[1]
 
     return abs(x) + abs(y)
+
+# Kruskal's algorithm
 
 def find(parents, room):
     if parents[room] == room:
@@ -113,18 +119,16 @@ def union(parents, ranks, a, b):
     elif ranks[aroot] > ranks[broot]:
         parents[broot] = aroot
 
+# Fill functions
+
 def fill(world, tile, bounds):
-    if not FEATURE_ROOMS:
-        return
     for y in range(bounds[TOP], bounds[BOTTOM]):
         for x in range(bounds[LEFT], bounds[RIGHT]):
             world[y][x] = tile
 
 def fillLineH(world, tile, startX, endX, yPos, firstTile = None, lastTile = None):
-    if DEBUG_PATHS:
+    if DEBUG_H_PATHS:
         print(f"Horizontal:\tY: ({yPos}), X: ({startX}-{endX}), start tile: \'{firstTile}\', end tile: \'{lastTile}\'")
-    if not FEATURE_PATHS:
-        return
     if firstTile == None:
         firstTile = tile
     if lastTile == None:
@@ -141,10 +145,8 @@ def fillLineH(world, tile, startX, endX, yPos, firstTile = None, lastTile = None
         count += 1
 
 def fillLineV(world, tile, startY, endY, xPos, firstTile = None, lastTile = None):
-    if DEBUG_PATHS:
+    if DEBUG_V_PATHS:
         print(f"Vertical:\tY: ({startY}-{endY}), X: ({xPos}), start tile: \'{firstTile}\', end tile: \'{lastTile}\'")
-    if not FEATURE_PATHS:
-        return
     if firstTile == None:
         firstTile = tile
     if lastTile == None:
@@ -160,49 +162,82 @@ def fillLineV(world, tile, startY, endY, xPos, firstTile = None, lastTile = None
         world[y][xPos] = tileUsed
         count += 1
 
-def intersectLineH(world, rooms, startX, endX, yPos, roomE, roomE2):
-    for ri in range(0, len(rooms)):
-        if ri == roomE or ri == roomE2[0]:
-            continue
-        
-        room = rooms[ri]
-        roomBounds = room.bounds
-        
-        if not (startX > roomBounds[RIGHT] or endX < roomBounds[LEFT] or \
-                yPos > roomBounds[BOTTOM] or yPos < roomBounds[TOP]):
-            if DEBUG_PATHS:
-                print(f"Horizontal intersection. Line: Y: ({yPos}) X: ({startX}-{endX}) Room: #{ri} {room}")
-            return True
-    
-    return False
+# Intersection checks
 
-def intersectLineV(world, rooms, startY, endY, xPos, roomE, roomE2):
-    for ri in range(0, len(rooms)):
+def intersectRect(ba, bb):
+    return not (ba[LEFT] > bb[RIGHT] or ba[RIGHT] < bb[LEFT] or \
+                ba[TOP] > bb[BOTTOM] or ba[BOTTOM] < bb[TOP])
+
+def intersectRectPoint(rect, point):
+    X = 0
+    Y = 1
+    return rect[LEFT] <= point[X] and rect[TOP] <= point[Y] and rect[RIGHT] >= point[X] and rect[BOTTOM] >= point[Y]
+
+def intersectRectLine(rect, startPoint, endPoint):
+    return intersectRectPoint(rect, startPoint) or intersectRectPoint(rect, endPoint)
+
+def intersectLineH(world, rooms, roomCount, startX, endX, yPos, roomE, roomE2):
+    for ri in range(0, roomCount):
         if ri == roomE or ri == roomE2:
             continue
         
         room = rooms[ri]
         roomBounds = room.bounds
         
-        if not (xPos > roomBounds[RIGHT] or xPos < roomBounds[LEFT] or \
-                startY > roomBounds[BOTTOM] or endY < roomBounds[TOP]):
-            if DEBUG_PATHS:
-                print(f"Vertical intersection. Line: Y: ({startY}-{endY}) X: ({xPos}) Room: #{ri} {room}")
+        if intersectRectLine(roomBounds, (startX, yPos), (endX, yPos)):
+            if DEBUG_H_PATHS:
+                print(f"Horizontal intersection. Line: Y: ({yPos}) X: ({startX}-{endX}) Room: #{ri} {roomBounds}")
             return True
-        
+    
     return False
+
+def intersectLineV(world, rooms, roomCount, startY, endY, xPos, roomE, roomE2):
+    for ri in range(0, roomCount):
+        if ri == roomE or ri == roomE2:
+            continue
+        
+        room = rooms[ri]
+        roomBounds = room.bounds
+        
+        if intersectRectLine(roomBounds, (xPos, startY), (xPos, endY)):
+            if DEBUG_V_PATHS:
+                print(f"Vertical intersection. Line: Y: ({startY}-{endY}) X: ({xPos}) Room: #{ri} {roomBounds}")
+            return True
+    
+    return False
+
+# World print
+
+def printWorld(world, height, width):
+    print("\t\t", end = "")
+        
+    for i in range(0, int(width / 4)):
+        print(f"{i*4}\t", end = "")
+    print()
+    print("\t\t", end = "")
+    for i in range(0, int(width / 4)):
+        print("|\t", end = "")
+    
+    print()
+    
+    for y in range(0, height):
+        # Double up the X axis so that things look more square
+        print(f"{y}\t\t" + ''.join([val for pair in zip(world[y], world[y]) for val in pair]))
+
+# Classes
 
 class Room:
     def __init__(self):
         self.bounds = [0] * 4
         self.doorBounds = []
-        self.tile = ' '
+        self.tile = roomTile
+        self.maxDoors = 3
     
     def generate(self, rng):
-        self.bounds[TOP] = rng.randrange(0, WORLD_HEIGHT - MAX_ROOM_HEIGHT)
         self.bounds[LEFT] = rng.randrange(0, WORLD_WIDTH - MAX_ROOM_WIDTH)
-        self.bounds[BOTTOM] = min(self.bounds[TOP] + rng.randrange(MIN_ROOM_HEIGHT, MAX_ROOM_HEIGHT), WORLD_HEIGHT)
+        self.bounds[TOP] = rng.randrange(0, WORLD_HEIGHT - MAX_ROOM_HEIGHT)
         self.bounds[RIGHT] = min(self.bounds[LEFT] + rng.randrange(MIN_ROOM_WIDTH, MAX_ROOM_WIDTH), WORLD_WIDTH)
+        self.bounds[BOTTOM] = min(self.bounds[TOP] + rng.randrange(MIN_ROOM_HEIGHT, MAX_ROOM_HEIGHT), WORLD_HEIGHT)
         
         self.doorBounds.append(self.bounds)
     
@@ -210,13 +245,15 @@ class Room:
         fill(world, self.tile, self.bounds)
 
     def intersectsWithRect(self, rect):
-        return rectIntersect(self.bounds, rect)
+        return intersectRect(self.bounds, rect)
 
 class BossRoom(Room):
     def __init__(self):
         super().__init__()
         self.radius = 0.0
         self.center = (0, 0)
+        self.maxDoors = 2
+        self.boxes = None
     
     def generate(self, rng):
         self.radius = floor(rng.uniform(MIN_BOSS_RADIUS, MAX_BOSS_RADIUS))
@@ -241,27 +278,33 @@ class BossRoom(Room):
         bottomCube = [0] * 4
         rightCube = [0] * 4
         
-        topCube[TOP] = self.bounds[TOP]
         topCube[LEFT] = centerX - (ceil((MIN_ROOM_WIDTH) / 2))
-        topCube[BOTTOM] = topCube[TOP] + MIN_ROOM_HEIGHT + 1
+        topCube[TOP] = self.bounds[TOP]
         topCube[RIGHT] = centerX + (ceil((MIN_ROOM_WIDTH) / 2)) + 1
+        topCube[BOTTOM] = topCube[TOP] + MIN_ROOM_HEIGHT + 1
         
-        leftCube[TOP] = centerY - (ceil((MIN_ROOM_HEIGHT) / 2))
         leftCube[LEFT] = self.bounds[LEFT]
-        leftCube[BOTTOM] = centerY + (ceil((MIN_ROOM_WIDTH) / 2)) + 1
+        leftCube[TOP] = centerY - (ceil((MIN_ROOM_HEIGHT) / 2))
         leftCube[RIGHT] = leftCube[LEFT] + MIN_ROOM_WIDTH + 1
+        leftCube[BOTTOM] = centerY + (ceil((MIN_ROOM_WIDTH) / 2)) + 1
         
-        bottomCube[TOP] = self.bounds[BOTTOM] - MIN_ROOM_HEIGHT
         bottomCube[LEFT] = topCube[LEFT]
-        bottomCube[BOTTOM] = self.bounds[BOTTOM]
+        bottomCube[TOP] = self.bounds[BOTTOM] - MIN_ROOM_HEIGHT
         bottomCube[RIGHT] = topCube[RIGHT]
+        bottomCube[BOTTOM] = self.bounds[BOTTOM]
         
-        rightCube[TOP] = leftCube[TOP]
         rightCube[LEFT] = self.bounds[RIGHT] - MIN_ROOM_WIDTH
-        rightCube[BOTTOM] = leftCube[BOTTOM]
+        rightCube[TOP] = leftCube[TOP]
         rightCube[RIGHT] = self.bounds[RIGHT]
+        rightCube[BOTTOM] = leftCube[BOTTOM]
         
-        self.doorBounds = [topCube, leftCube, bottomCube, rightCube]
+        self.boxes = [leftCube, topCube, rightCube, bottomCube]
+        self.doorBounds = deepcopy(self.boxes)
+        
+        self.doorBounds[LEFT][RIGHT] = leftCube[LEFT] + 1
+        self.doorBounds[TOP][BOTTOM] = topCube[TOP] + 1
+        self.doorBounds[RIGHT][LEFT] = rightCube[RIGHT] - 1
+        self.doorBounds[BOTTOM][TOP] = bottomCube[BOTTOM] - 1
     
     def populate(self, world):
         for y in range(self.bounds[TOP], self.bounds[BOTTOM]):
@@ -271,21 +314,21 @@ class BossRoom(Room):
                 else:
                     world[y][x] = bossWallTile
         
-        for bound in self.doorBounds:
+        for bound in self.boxes:
             fill(world, self.tile, bound)
     
     def intersectsWithRect(self, rect):
-        for cube in self.doorBounds:
+        for cube in self.boxes:
             if intersectRect(rect, cube):
                 return True
         
-        if distEuclid((rect[TOP], rect[LEFT]), self.center) <= self.radius:
+        if distEuclid((rect[TOP], rect[LEFT]), self.center) <= self.radius + 1:
             return True
-        if distEuclid((rect[TOP], rect[RIGHT]), self.center) <= self.radius:
+        if distEuclid((rect[TOP], rect[RIGHT]), self.center) <= self.radius + 1:
             return True
-        if distEuclid((rect[BOTTOM], rect[LEFT]), self.center) <= self.radius:
+        if distEuclid((rect[BOTTOM], rect[LEFT]), self.center) <= self.radius + 1:
             return True
-        if distEuclid((rect[BOTTOM], rect[RIGHT]), self.center) <= self.radius:
+        if distEuclid((rect[BOTTOM], rect[RIGHT]), self.center) <= self.radius + 1:
             return True
 
 class RoomTableData:
@@ -294,12 +337,11 @@ class RoomTableData:
         self.weight = wt
         self.perWorldMin = pwm
         self.priority = rank
-    def test(self):
-        return
+
 # Technically should be a configuration option, but who really wants to
 # fuck with the room generation that badly? Come on min, leave it alone
-ROOM_WEIGHTS = [RoomTableData(BossRoom.__class__, 5, 1, 99),
-                RoomTableData(Room.__class__, 95, 0, 0)]
+ROOM_WEIGHTS = [RoomTableData(Room, 95, 0, 0),
+                RoomTableData(BossRoom, 5, 1, 99)]
 
 ROOM_WEIGHTS.sort(reverse = True, key = lambda data : data.priority)
 
@@ -315,7 +357,9 @@ def main():
     
     t0 = time.time_ns()
     
-    rooms = [None for a in range(ROOM_COUNT)]
+    rooms = [None] * ROOM_COUNT
+    roomCount = ROOM_COUNT
+    maxDoors = [0] * ROOM_COUNT
     mandatoryRooms = []
     
     totalWeight = 0
@@ -323,11 +367,11 @@ def main():
     for data in ROOM_WEIGHTS:
         totalWeight += data.weight
         for i in range(data.perWorldMin):
-            mandatoryRooms.append(data.newRoom)
+            mandatoryRooms.append(data)
     
     for ri in range(ROOM_COUNT):
-        attempt = True
-        while attempt:
+        attempts = 0
+        while attempts < 128:
             roomData = None
             
             if ri < len(mandatoryRooms):
@@ -340,90 +384,125 @@ def main():
                     if weight < 0:
                         roomData = data
                         break
-                
+            
             if roomData == None:
-                roomData = RoomTableData(Room.__class__, 0, 0, 0)
-
-            print(RoomTableData.__attrs__)
-            #factory = roomData.newRoom
-            #currentRoom = factory()
-            return
+                roomData = RoomTableData(Room, 0, 0, 0)
+            
+            currentRoom = roomData.newRoom()
+            currentRoom.generate(rng)
+            
             if ri > 0:
                 intersection = False
                 for i in range(0, ri):
-                    if intersectRect(currentRoom.bounds, rooms[i].bounds):
+                    if intersectRect(rooms[i].bounds, currentRoom.bounds):
                         intersection = True
                         break
                 
                 if intersection:
+                    attempts += 1
                     continue
             
-            attempt = False
             rooms[ri] = currentRoom
-            currentRoom.populate(world)
+            maxDoors[ri] = currentRoom.maxDoors
+            
+            if FEATURE_ROOMS:
+                currentRoom.populate(world)
+                if PRINT_AFTER_EVERY_ROOM:
+                    printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
+            break
+        if attempts == 128:
+            print("Took too long to generate a room")
+            roomCount = ri
+            break
     
     if DEBUG_ROOMS:
         print("Rooms:")
-        for ri in range(ROOM_COUNT):
+        for ri in range(roomCount):
             print(f"#{ri}: " + str(rooms[ri].bounds))
+        print("Maximum doors:")
+        print(maxDoors)
     
     # Step 2: Kruskal's Algorithm
     
-    doorBounds = []# (roomIndex, doorBounds)
+    allDoorBounds = []# (roomIndex, doorBounds)
     allPaths = []
     
-    for ri in range(ROOM_COUNT):
+    for ri in range(roomCount):
         room = rooms[ri]
         for bound in room.doorBounds:
             allDoorBounds.append((ri, bound))
     
-    for ri in range(len(allDoorBounds)):
-        for ri0 in range(ri + 1, len(allDoorBounds)):
-            doorBound = doorBounds[ri]
-            doorBoundOther = doorBounds[ri0]
+    for bi in range(len(allDoorBounds)):
+        for bi0 in range(bi + 1, len(allDoorBounds)):
+            doorBound = allDoorBounds[bi]
+            doorBoundOther = allDoorBounds[bi0]
             if doorBound[0] == doorBoundOther[0]:
                 continue
-            p = (doorBound, doorBoundOther, distManhatten(doorBound[1], doorBoundOther[1]))
+            p = (doorBound, doorBoundOther, distEuclid(center(doorBound[1]), center(doorBoundOther[1])))
             allPaths.append(p)
     
     allPaths.sort(key = lambda x : x[2])
     
-    parents = [i for i in range(ROOM_COUNT)]
-    ranks = [0] * ROOM_COUNT
+    parents = [i for i in range(roomCount)]
+    ranks = [0] * roomCount
     paths = []
-    doorsPerRoom = [0] * ROOM_COUNT
+    doorCounts = [0] * roomCount
     
     for p in allPaths:
-        if doorsPerRoom[p[0][0]] == MAX_DOORS_PER_ROOM or doorsPerRoom[p[1][0]] == MAX_DOORS_PER_ROOM:
-            continue
+        firstRoomIndex = p[0][0]
+        otherRoomIndex = p[1][0]
         # Could add a condition to check for intersecting rooms, but that would have
         # limited use, and wouldn't be very practical. Not to mention make the code
         # run significantly slower.
-        if find(parents, p[0]) != find(parents, p[1]):
+        if doorCounts[firstRoomIndex] == maxDoors[firstRoomIndex] or doorCounts[otherRoomIndex] == maxDoors[otherRoomIndex]:
+            continue
+        if find(parents, firstRoomIndex) != find(parents, otherRoomIndex):
             paths.append(p)
-            union(parents, ranks, p[0], p[1])
-            doorsPerRoom[p[0]] += 1
-            doorsPerRoom[p[1]] += 1
+            union(parents, ranks, firstRoomIndex, otherRoomIndex)
+            
+            doorCounts[firstRoomIndex] += 1
+            doorCounts[otherRoomIndex] += 1
+    
+    root = 0
+    rootOptions = []
+    for i in range(roomCount):
+        # There will always be a room with 1 door, because there can't be a cycle in the spanning tree.
+        # If we had 3 rooms, 2 would have one door. If we had 4, two would have one door. Etc.
+        if doorCounts[i] == 1:
+            rootOptions.append(i)
+    
+    root = rng.choice(rootOptions)
     
     if DEBUG_KRUSKAL:
+        print(f"Parents: {parents}")
         print("Minimum weight spanning tree:")
         for p in paths:
             print(p)
+        print("Door counts:")
+        for dc in doorCounts:
+            print(dc)
+        print(f"Root: #{root}, {rooms[root].bounds}")
     
     # Step 3: Build Paths
     
-    if DEBUG_PATHS:
+    if DEBUG_V_PATHS or DEBUG_H_PATHS:
         print("Paths:")
     
     for p in paths:
-        startRoom = doorBounds[p[0]]
-        endRoom = doorBounds[p[1]]
+        startRoom = p[0]
+        endRoom = p[1]
+
+        startRoomIndex = startRoom[0]
+        endRoomIndex = endRoom[0]
         
-        horTunStart = max(startRoom[TOP], endRoom[TOP])
-        horTunEnd = min(startRoom[BOTTOM], endRoom[BOTTOM])
+        startBounds = startRoom[1]
+        endBounds = endRoom[1]
         
-        verTunStart = max(startRoom[LEFT], endRoom[LEFT])
-        verTunEnd = min(startRoom[RIGHT], endRoom[RIGHT])
+        horTunYStart = max(startBounds[TOP], endBounds[TOP])
+        horTunYEnd = min(startBounds[BOTTOM], endBounds[BOTTOM])
+        
+        verTunXStart = max(startBounds[LEFT], endBounds[LEFT])
+        verTunXEnd = min(startBounds[RIGHT], endBounds[RIGHT])
         
         # vertical tunnel
         startY = 0
@@ -435,37 +514,39 @@ def main():
         startX = 0
         tunnelY = 0
         
-        if horTunStart < horTunEnd:
-            if DEBUG_PATHS:
+        if horTunYStart < horTunYEnd:
+            if DEBUG_H_PATHS:
                 print("Horizontal needed")
-            if startRoom[LEFT] > endRoom[LEFT]:
-                startX = endRoom[RIGHT]
-                endX = startRoom[LEFT]
+            if startBounds[LEFT] > endBounds[LEFT]:
+                startX = endBounds[RIGHT]
+                endX = startBounds[LEFT]
             else:
-                startX = startRoom[RIGHT]
-                endX = endRoom[LEFT]
+                startX = startBounds[RIGHT]
+                endX = endBounds[LEFT]
             
-            tunnelY = rng.randrange(horTunStart, horTunEnd)
+            tunnelY = rng.randrange(horTunYStart, horTunYEnd)
             
-            fillLineH(world, tunnelTile, startX, endX, tunnelY, doorTile, doorTile)
+            if FEATURE_PATHS:
+                fillLineH(world, tunnelTile, startX, endX, tunnelY, doorTile, doorTile)
             
-        elif verTunStart < verTunEnd:
-            if DEBUG_PATHS:
+        elif verTunXStart < verTunXEnd:
+            if DEBUG_V_PATHS:
                 print("Vertical needed")
-            if startRoom[TOP] > endRoom[TOP]:
-                startY = endRoom[BOTTOM]
-                endY = startRoom[TOP]
+            if startBounds[TOP] > endBounds[TOP]:
+                startY = endBounds[BOTTOM]
+                endY = startBounds[TOP]
             else:
-                startY = startRoom[BOTTOM]
-                endY = endRoom[TOP]
+                startY = startBounds[BOTTOM]
+                endY = endBounds[TOP]
             
-            tunnelX = rng.randrange(verTunStart, verTunEnd)
+            tunnelX = rng.randrange(verTunXStart, verTunXEnd)
             
-            fillLineV(world, tunnelTile, startY, endY, tunnelX, doorTile, doorTile)
+            if FEATURE_PATHS:
+                fillLineV(world, tunnelTile, startY, endY, tunnelX, doorTile, doorTile)
             
         else:
-            if DEBUG_PATHS:
-                print("Diagonal needed")
+            if DEBUG_D_PATHS:
+                print(f"Diagonal needed between {startBounds} and {endBounds}")
             startVertical = rng.random() > 0.5
             
             vStartTile = tunnelTile
@@ -474,77 +555,73 @@ def main():
             hEndTile = tunnelTile
             
             attempts = 0
-            
-            while attempts < 2:
-                startRY = rng.randrange(startRoom[TOP] + 1, startRoom[BOTTOM] - 1)
-                startRX = rng.randrange(startRoom[LEFT] + 1, startRoom[RIGHT] - 1)
-                endRY = rng.randrange(endRoom[TOP] + 1, endRoom[BOTTOM] - 1)
-                endRX = rng.randrange(endRoom[LEFT] + 1, endRoom[RIGHT] - 1)
+
+            # TODO make algorithm smarter
+            # TODO implement an optional diagonal tunnel
+            # NOTE: If the attempt count is too low, it will still intersect some rooms even if it doesn't have to.
+            # That's because it randomly selects new positions and gives up too easily.
+            while attempts < 32:
+                addOneV = startBounds[TOP] == endBounds[BOTTOM] or startBounds[BOTTOM] == endBounds[TOP]
+                addOneH = startBounds[LEFT] == endBounds[RIGHT] or startBounds[RIGHT] == endBounds[LEFT]
+                
+                startRY = rng.randrange(startBounds[TOP] + addOneV, startBounds[BOTTOM] - addOneV)
+                startRX = rng.randrange(startBounds[LEFT] + addOneH, startBounds[RIGHT] - addOneH)
+                endRY = rng.randrange(endBounds[TOP] + addOneV, endBounds[BOTTOM] - addOneV)
+                endRX = rng.randrange(endBounds[LEFT] + addOneH, endBounds[RIGHT] - addOneH)
                 
                 if startVertical:
-                    startY = min(startRoom[BOTTOM], endRY)
-                    endY = max(startRoom[TOP], endRY)
+                    startY = min(startBounds[BOTTOM], endRY)
+                    endY = max(startBounds[TOP], endRY)
                     tunnelX = startRX
                     
-                    startX = min(endRoom[RIGHT], tunnelX)
-                    endX = max(endRoom[LEFT], startRX + 1)
+                    startX = min(endBounds[RIGHT], tunnelX)
+                    endX = max(endBounds[LEFT], startRX + 1)
                     tunnelY = endRY
                     
-                    vStartTile = doorTile if startY == startRoom[BOTTOM] else tunnelTile
-                    vEndTile = doorTile if endY == startRoom[TOP] else tunnelTile
-                    hStartTile = doorTile if startX == endRoom[RIGHT] else tunnelTile
-                    hEndTile = doorTile if endX == endRoom[LEFT] else tunnelTile
+                    vStartTile = doorTile if startY == startBounds[BOTTOM] else tunnelTile
+                    vEndTile = doorTile if endY == startBounds[TOP] else tunnelTile
+                    hStartTile = doorTile if startX == endBounds[RIGHT] else tunnelTile
+                    hEndTile = doorTile if endX == endBounds[LEFT] else tunnelTile
                 else:
-                    startX = min(startRoom[RIGHT], endRX)
-                    endX = max(startRoom[LEFT], endRX)
+                    startX = min(startBounds[RIGHT], endRX)
+                    endX = max(startBounds[LEFT], endRX)
                     tunnelY = startRY
                     
-                    startY = min(endRoom[BOTTOM], tunnelY)
-                    endY = max(endRoom[TOP], startRY + 1)
+                    startY = min(endBounds[BOTTOM], tunnelY)
+                    endY = max(endBounds[TOP], startRY + 1)
                     tunnelX = endRX
                     
-                    vStartTile = doorTile if startY == endRoom[BOTTOM] else tunnelTile
-                    vEndTile = doorTile if endY == endRoom[TOP] else tunnelTile
-                    hStartTile = doorTile if startX == startRoom[RIGHT] else tunnelTile
-                    hEndTile = doorTile if endX == startRoom[LEFT] else tunnelTile
+                    vStartTile = doorTile if startY == endBounds[BOTTOM] else tunnelTile
+                    vEndTile = doorTile if endY == endBounds[TOP] else tunnelTile
+                    hStartTile = doorTile if startX == startBounds[RIGHT] else tunnelTile
+                    hEndTile = doorTile if endX == startBounds[LEFT] else tunnelTile
                 
-                if intersectLineV(world, rooms, startX, endX, tunnelY, p[0][0], p[1][0]) or \
-                   intersectLineH(world, rooms, startY, endY, tunnelX, p[0][0], p[1][0]):
-                    
+                if intersectLineV(world, rooms, roomCount, startY, endY, tunnelX, startRoomIndex, endRoomIndex) or \
+                   intersectLineH(world, rooms, roomCount, startX, endX, tunnelY, startRoomIndex, endRoomIndex):
                     attempts += 1
                     startVertical = not startVertical
-                    if DEBUG_PATHS:
-                        print(f"Found intersection when digging diagonal path between {rooms[p[0][0]]} and {rooms[p[1][0]]}")
+                    if DEBUG_D_PATHS:
+                        print(f"Found intersection when digging diagonal path between {startBounds} and {endBounds}")
                     continue
                 # I would go ahead and cancel the tunnel if we can't find a non-intersecting path,
                 # but that would make parts of the map unobtainable without mining tools.
                 # So we just say 'sod it' and build the tunnel anyway.
                 break
             
-            fillLineV(world, tunnelTile, startY, endY, tunnelX, vStartTile, vEndTile)
-            fillLineH(world, tunnelTile, startX, endX, tunnelY, hStartTile, hEndTile)
-            
+            if FEATURE_PATHS:
+                fillLineV(world, tunnelTile, startY, endY, tunnelX, vStartTile, vEndTile)
+                fillLineH(world, tunnelTile, startX, endX, tunnelY, hStartTile, hEndTile)
+        
+        if PRINT_AFTER_EVERY_PATH:
+            printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
     
     # Final step: Present
     
     t1 = time.time_ns()
     timeElapsed = (t1 - t0) / 1000000
     
-    if DEBUG_GEN:
-        print("\t\t", end = "")
-        
-        for i in range(0, int(WORLD_WIDTH / 4)):
-            print(f"{i*4}\t", end = "")
-        print()
-        print("\t\t", end = "")
-        for i in range(0, int(WORLD_WIDTH / 4)):
-            print("|\t", end = "")
-        
-        print()
-        
-        for y in range(0, WORLD_HEIGHT):
-            # Double up the X axis so that things look more square
-            print(f"{y}\t\t" + ''.join([val for pair in zip(world[y], world[y]) for val in pair]))
+    if PRINT_FINAL_DUNGEON:
+        printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
     
     if BENCHMARK:
         print(f"Dungeon generated in {timeElapsed}")
@@ -554,7 +631,7 @@ def main():
         with open(FILE_NAME, 'wt') as f:
             f.write(f"Seed: {seed}\n")
             f.write(f"World size: {WORLD_HEIGHT}x{WORLD_WIDTH} (Height x Width)\n")
-            f.write(f"Room count: {ROOM_COUNT}\n")
+            f.write(f"Room count: {roomCount}\n")
             f.write(f"Room size: {MIN_ROOM_WIDTH}x{MIN_ROOM_HEIGHT} - {MAX_ROOM_WIDTH}x{MAX_ROOM_HEIGHT}\n")
             f.write(f"Maximum doors: {MAX_DOORS_PER_ROOM}\n")
             for y in range(0, WORLD_HEIGHT):
