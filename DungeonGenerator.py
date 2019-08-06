@@ -11,16 +11,18 @@ import time
 #################
 
 USE_CUSTOM_SEED     = True
-CUSTOM_SEED         = 1337420
+CUSTOM_SEED         = 4956553581393908256#1337420
 
 solidTile           = '#'
 roomTile            = '`'
 tunnelTile          = ' '
 doorTile            = 'O'
 bossWallTile        = '@'
+chestTile           = '$'
+monsterTile         = '^'
 
 PRINT_TO_FILE       = False
-FILE_NAME           = "dungeonBossTest3.txt"
+FILE_NAME           = "dungeonBossTest4.txt"
 
 MIN_ROOM_HEIGHT             = 3#5
 MIN_ROOM_WIDTH              = 3#5
@@ -30,11 +32,12 @@ MAX_ROOM_WIDTH              = 6#8
 MIN_BOSS_RADIUS             = 6.5
 MAX_BOSS_RADIUS             = 14.5
 
-WORLD_HEIGHT                = 48
+WORLD_HEIGHT                = 128
 WORLD_WIDTH                 = 48
 
 ROOM_COUNT                  = 16#96
-MAX_DOORS_PER_ROOM          = 3
+
+MAX_CHEST_COUNT             = 2
 
 BENCHMARK           = False
 BENCHMARK_RUNS      = 10
@@ -171,7 +174,7 @@ def intersectRect(ba, bb):
 def intersectRectPoint(rect, point):
     X = 0
     Y = 1
-    return rect[LEFT] <= point[X] and rect[TOP] <= point[Y] and rect[RIGHT] >= point[X] and rect[BOTTOM] >= point[Y]
+    return rect[LEFT] <= point[X] and rect[TOP] <= point[Y] and rect[RIGHT] > point[X] and rect[BOTTOM] > point[Y]
 
 def intersectRectLine(rect, startPoint, endPoint):
     return intersectRectPoint(rect, startPoint) or intersectRectPoint(rect, endPoint)
@@ -232,6 +235,7 @@ class Room:
         self.doorBounds = []
         self.tile = roomTile
         self.maxDoors = 3
+        self.chests = []
     
     def generate(self, rng):
         self.bounds[LEFT] = rng.randrange(0, WORLD_WIDTH - MAX_ROOM_WIDTH)
@@ -239,11 +243,21 @@ class Room:
         self.bounds[RIGHT] = min(self.bounds[LEFT] + rng.randrange(MIN_ROOM_WIDTH, MAX_ROOM_WIDTH), WORLD_WIDTH)
         self.bounds[BOTTOM] = min(self.bounds[TOP] + rng.randrange(MIN_ROOM_HEIGHT, MAX_ROOM_HEIGHT), WORLD_HEIGHT)
         
+        self.chestCount = rng.randrange(0, MAX_CHEST_COUNT)
+        self.chests = [None] * self.chestCount
+        
+        for i in range(0, self.chestCount):
+            self.chests[i] = (rng.randrange(self.bounds[LEFT], self.bounds[RIGHT]), rng.randrange(self.bounds[TOP], self.bounds[BOTTOM]))
+        
         self.doorBounds.append(self.bounds)
     
     def populate(self, world):
         fill(world, self.tile, self.bounds)
-
+    
+    def populateDecor(self, world):
+        for chest in self.chests:
+            world[chest[1]][chest[0]] = chestTile
+    
     def intersectsWithRect(self, rect):
         return intersectRect(self.bounds, rect)
 
@@ -299,8 +313,8 @@ class BossRoom(Room):
         rightCube[BOTTOM] = leftCube[BOTTOM]
         
         self.boxes = [leftCube, topCube, rightCube, bottomCube]
-        self.doorBounds = deepcopy(self.boxes)
         
+        self.doorBounds = deepcopy(self.boxes)
         self.doorBounds[LEFT][RIGHT] = leftCube[LEFT] + 1
         self.doorBounds[TOP][BOTTOM] = topCube[TOP] + 1
         self.doorBounds[RIGHT][LEFT] = rightCube[RIGHT] - 1
@@ -347,17 +361,17 @@ ROOM_WEIGHTS.sort(reverse = True, key = lambda data : data.priority)
 
 def main():
     world = _2da(WORLD_WIDTH, WORLD_HEIGHT, solidTile)
-    rng = random.Random()
-    seed = CUSTOM_SEED if USE_CUSTOM_SEED else rng.randrange(sys.maxsize)
+    seed = CUSTOM_SEED if USE_CUSTOM_SEED else random.randrange(sys.maxsize)
     
     print(f"Map seed (ew): {seed}")
-    rng.seed(seed)
+    random.seed(seed)
     
     # Step 1: Room generation
     
     t0 = time.time_ns()
     
     rooms = [None] * ROOM_COUNT
+    generators = [None] * ROOM_COUNT
     roomCount = ROOM_COUNT
     maxDoors = [0] * ROOM_COUNT
     mandatoryRooms = []
@@ -371,24 +385,28 @@ def main():
     
     for ri in range(ROOM_COUNT):
         attempts = 0
+        roomData = None
+        
+        if ri < len(mandatoryRooms):
+            roomData = mandatoryRooms[ri]
+        else:
+            weight = rng.randrange(0, totalWeight)
+            
+            for data in ROOM_WEIGHTS:
+                weight -= data.weight
+                if weight < 0:
+                    roomData = data
+                    break
+        
+        if roomData == None:
+            roomData = RoomTableData(Room, 0, 0, 0)
+        
+        currentRoom = roomData.newRoom()
+        rng = random.Random()
+        roomSeed = random.randrange(sys.maxsize)
+        rng.seed(roomSeed)
+        
         while attempts < 128:
-            roomData = None
-            
-            if ri < len(mandatoryRooms):
-                roomData = mandatoryRooms[ri]
-            else:
-                weight = rng.randrange(0, totalWeight)
-                
-                for data in ROOM_WEIGHTS:
-                    weight -= data.weight
-                    if weight < 0:
-                        roomData = data
-                        break
-            
-            if roomData == None:
-                roomData = RoomTableData(Room, 0, 0, 0)
-            
-            currentRoom = roomData.newRoom()
             currentRoom.generate(rng)
             
             if ri > 0:
@@ -401,15 +419,20 @@ def main():
                 if intersection:
                     attempts += 1
                     continue
-            
+                
             rooms[ri] = currentRoom
             maxDoors[ri] = currentRoom.maxDoors
             
             if FEATURE_ROOMS:
                 currentRoom.populate(world)
-                if PRINT_AFTER_EVERY_ROOM:
-                    printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
+            
+            if FEATURE_ROOM_DECOR:
+                currentRoom.populateDecor(world)
+            
+            if PRINT_AFTER_EVERY_ROOM:
+                printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
             break
+            
         if attempts == 128:
             print("Took too long to generate a room")
             roomCount = ri
@@ -467,11 +490,10 @@ def main():
     rootOptions = []
     for i in range(roomCount):
         # There will always be a room with 1 door, because there can't be a cycle in the spanning tree.
-        # If we had 3 rooms, 2 would have one door. If we had 4, two would have one door. Etc.
         if doorCounts[i] == 1:
             rootOptions.append(i)
     
-    root = rng.choice(rootOptions)
+    root = random.choice(rootOptions)
     
     if DEBUG_KRUSKAL:
         print(f"Parents: {parents}")
@@ -485,13 +507,13 @@ def main():
     
     # Step 3: Build Paths
     
-    if DEBUG_V_PATHS or DEBUG_H_PATHS:
+    if DEBUG_V_PATHS or DEBUG_H_PATHS or DEBUG_D_PATHS:
         print("Paths:")
     
     for p in paths:
         startRoom = p[0]
         endRoom = p[1]
-
+        
         startRoomIndex = startRoom[0]
         endRoomIndex = endRoom[0]
         
@@ -524,7 +546,7 @@ def main():
                 startX = startBounds[RIGHT]
                 endX = endBounds[LEFT]
             
-            tunnelY = rng.randrange(horTunYStart, horTunYEnd)
+            tunnelY = random.randrange(horTunYStart, horTunYEnd)
             
             if FEATURE_PATHS:
                 fillLineH(world, tunnelTile, startX, endX, tunnelY, doorTile, doorTile)
@@ -539,7 +561,7 @@ def main():
                 startY = startBounds[BOTTOM]
                 endY = endBounds[TOP]
             
-            tunnelX = rng.randrange(verTunXStart, verTunXEnd)
+            tunnelX = random.randrange(verTunXStart, verTunXEnd)
             
             if FEATURE_PATHS:
                 fillLineV(world, tunnelTile, startY, endY, tunnelX, doorTile, doorTile)
@@ -547,7 +569,7 @@ def main():
         else:
             if DEBUG_D_PATHS:
                 print(f"Diagonal needed between {startBounds} and {endBounds}")
-            startVertical = rng.random() > 0.5
+            startVertical = random.random() > 0.5
             
             vStartTile = tunnelTile
             vEndTile = tunnelTile
@@ -633,7 +655,6 @@ def main():
             f.write(f"World size: {WORLD_HEIGHT}x{WORLD_WIDTH} (Height x Width)\n")
             f.write(f"Room count: {roomCount}\n")
             f.write(f"Room size: {MIN_ROOM_WIDTH}x{MIN_ROOM_HEIGHT} - {MAX_ROOM_WIDTH}x{MAX_ROOM_HEIGHT}\n")
-            f.write(f"Maximum doors: {MAX_DOORS_PER_ROOM}\n")
             for y in range(0, WORLD_HEIGHT):
                 f.write(''.join([val for pair in zip(world[y], world[y]) for val in pair]) + '\n')
 
