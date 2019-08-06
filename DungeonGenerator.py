@@ -11,15 +11,16 @@ import time
 #################
 
 USE_CUSTOM_SEED     = True
-CUSTOM_SEED         = 4956553581393908256#1337420
+CUSTOM_SEED         = 1337420
 
 solidTile           = '#'
-roomTile            = '`'
+roomTile            = ' '
 tunnelTile          = ' '
 doorTile            = 'O'
-bossWallTile        = '@'
+bossWallTile        = '?'
+bossTile            = '@'
 chestTile           = '$'
-monsterTile         = '^'
+monsterTile         = '~'
 
 PRINT_TO_FILE       = False
 FILE_NAME           = "dungeonBossTest4.txt"
@@ -32,12 +33,16 @@ MAX_ROOM_WIDTH              = 6#8
 MIN_BOSS_RADIUS             = 6.5
 MAX_BOSS_RADIUS             = 14.5
 
-WORLD_HEIGHT                = 128
+WORLD_HEIGHT                = 48
 WORLD_WIDTH                 = 48
 
 ROOM_COUNT                  = 16#96
 
-MAX_CHEST_COUNT             = 2
+MIN_CHEST_COUNT             = 0
+MAX_CHEST_COUNT             = 3
+
+MIN_MONSTER_COUNT           = 1
+MAX_MONSTER_COUNT           = 2
 
 BENCHMARK           = False
 BENCHMARK_RUNS      = 10
@@ -57,6 +62,8 @@ PRINT_FINAL_DUNGEON         = True
 PRINT_AFTER_EVERY_ROOM      = False
 PRINT_AFTER_EVERY_PATH      = False
 
+# Debugs room generation
+DEBUG_ROOM_GEN      = False
 # Debugs room generation. Will print a list of generated
 # rooms, specifically their bounds.
 DEBUG_ROOMS         = False
@@ -94,7 +101,7 @@ def center(room):
 def distEuclid(a, b):
     x = a[0] - b[0]
     y = a[1] - b[1]
-
+    
     return sqrt(x**2 + y**2)
 
 def distManhatten(a, b):
@@ -174,7 +181,10 @@ def intersectRect(ba, bb):
 def intersectRectPoint(rect, point):
     X = 0
     Y = 1
-    return rect[LEFT] <= point[X] and rect[TOP] <= point[Y] and rect[RIGHT] > point[X] and rect[BOTTOM] > point[Y]
+    # Technically RIGHT and BOTTOM should be compared with > and not >=.
+    # This was done because some paths will allow access to rooms without opening a door.
+    # TODO: make an actual rectangle-path intersection algorithm
+    return rect[LEFT] <= point[X] and rect[TOP] <= point[Y] and rect[RIGHT] >= point[X] and rect[BOTTOM] >= point[Y]
 
 def intersectRectLine(rect, startPoint, endPoint):
     return intersectRectPoint(rect, startPoint) or intersectRectPoint(rect, endPoint)
@@ -232,10 +242,10 @@ def printWorld(world, height, width):
 class Room:
     def __init__(self):
         self.bounds = [0] * 4
-        self.doorBounds = []
+        self.doorBounds = [None]
         self.tile = roomTile
         self.maxDoors = 3
-        self.chests = []
+        self.decor = {}
     
     def generate(self, rng):
         self.bounds[LEFT] = rng.randrange(0, WORLD_WIDTH - MAX_ROOM_WIDTH)
@@ -243,23 +253,29 @@ class Room:
         self.bounds[RIGHT] = min(self.bounds[LEFT] + rng.randrange(MIN_ROOM_WIDTH, MAX_ROOM_WIDTH), WORLD_WIDTH)
         self.bounds[BOTTOM] = min(self.bounds[TOP] + rng.randrange(MIN_ROOM_HEIGHT, MAX_ROOM_HEIGHT), WORLD_HEIGHT)
         
-        self.chestCount = rng.randrange(0, MAX_CHEST_COUNT)
-        self.chests = [None] * self.chestCount
+        self.doorBounds[0] = self.bounds
         
-        for i in range(0, self.chestCount):
-            self.chests[i] = (rng.randrange(self.bounds[LEFT], self.bounds[RIGHT]), rng.randrange(self.bounds[TOP], self.bounds[BOTTOM]))
+        if DEBUG_ROOM_GEN:
+            print(self.bounds)
         
-        self.doorBounds.append(self.bounds)
-    
+        self.decor = {}
+        self.chestCount = rng.randrange(MIN_CHEST_COUNT, MAX_CHEST_COUNT)
+        self.monsterCount = rng.randrange(MIN_CHEST_COUNT, MAX_MONSTER_COUNT)
+        
+        for i in range(self.monsterCount):
+            coords = (rng.randrange(self.bounds[TOP], self.bounds[BOTTOM]), rng.randrange(self.bounds[LEFT], self.bounds[RIGHT]))
+            self.decor[coords] = monsterTile
+        
+        for i in range(self.chestCount):
+            coords = (rng.randrange(self.bounds[TOP], self.bounds[BOTTOM]), rng.randrange(self.bounds[LEFT], self.bounds[RIGHT]))
+            self.decor[coords] = chestTile
+        
     def populate(self, world):
         fill(world, self.tile, self.bounds)
     
     def populateDecor(self, world):
-        for chest in self.chests:
-            world[chest[1]][chest[0]] = chestTile
-    
-    def intersectsWithRect(self, rect):
-        return intersectRect(self.bounds, rect)
+        for coords in self.decor:
+            world[coords[0]][coords[1]] = self.decor[coords]
 
 class BossRoom(Room):
     def __init__(self):
@@ -267,7 +283,7 @@ class BossRoom(Room):
         self.radius = 0.0
         self.center = (0, 0)
         self.maxDoors = 2
-        self.boxes = None
+        self.boxes = []
     
     def generate(self, rng):
         self.radius = floor(rng.uniform(MIN_BOSS_RADIUS, MAX_BOSS_RADIUS))
@@ -331,20 +347,9 @@ class BossRoom(Room):
         for bound in self.boxes:
             fill(world, self.tile, bound)
     
-    def intersectsWithRect(self, rect):
-        for cube in self.boxes:
-            if intersectRect(rect, cube):
-                return True
-        
-        if distEuclid((rect[TOP], rect[LEFT]), self.center) <= self.radius + 1:
-            return True
-        if distEuclid((rect[TOP], rect[RIGHT]), self.center) <= self.radius + 1:
-            return True
-        if distEuclid((rect[BOTTOM], rect[LEFT]), self.center) <= self.radius + 1:
-            return True
-        if distEuclid((rect[BOTTOM], rect[RIGHT]), self.center) <= self.radius + 1:
-            return True
-
+    def populateDecor(self, world):
+        world[self.center[0]][self.center[1]] = bossTile
+    
 class RoomTableData:
     def __init__(self, factory, wt, pwm, rank):
         self.newRoom = factory
@@ -354,12 +359,30 @@ class RoomTableData:
 
 # Technically should be a configuration option, but who really wants to
 # fuck with the room generation that badly? Come on min, leave it alone
-ROOM_WEIGHTS = [RoomTableData(Room, 95, 0, 0),
-                RoomTableData(BossRoom, 5, 1, 99)]
+ROOM_TABLE = [RoomTableData(Room, 90, 0, 0),
+                RoomTableData(BossRoom, 10, 1, 99)]
 
-ROOM_WEIGHTS.sort(reverse = True, key = lambda data : data.priority)
+ROOM_TABLE.sort(reverse = True, key = lambda data : data.priority)
+
+def getWeightedRoom(totalWeight):
+    weight = random.randrange(totalWeight)
+    for data in ROOM_TABLE:
+        weight -= data.weight
+        if weight <= 0:
+            return data
+    return RoomTableData(Room, 0, 0, 0)
 
 def main():
+    assert ROOM_COUNT > 1
+    
+    assert MIN_ROOM_WIDTH > 1
+    assert MIN_ROOM_HEIGHT > 1
+    assert MAX_ROOM_WIDTH > MIN_ROOM_WIDTH
+    assert MAX_ROOM_HEIGHT > MIN_ROOM_HEIGHT
+    
+    assert WORLD_WIDTH >= MIN_ROOM_WIDTH
+    assert WORLD_HEIGHT >= MIN_ROOM_HEIGHT
+    
     world = _2da(WORLD_WIDTH, WORLD_HEIGHT, solidTile)
     seed = CUSTOM_SEED if USE_CUSTOM_SEED else random.randrange(sys.maxsize)
     
@@ -378,35 +401,30 @@ def main():
     
     totalWeight = 0
     
-    for data in ROOM_WEIGHTS:
+    for data in ROOM_TABLE:
         totalWeight += data.weight
         for i in range(data.perWorldMin):
             mandatoryRooms.append(data)
     
     for ri in range(ROOM_COUNT):
         attempts = 0
-        roomData = None
+        currentRoom = None
         
         if ri < len(mandatoryRooms):
-            roomData = mandatoryRooms[ri]
-        else:
-            weight = rng.randrange(0, totalWeight)
-            
-            for data in ROOM_WEIGHTS:
-                weight -= data.weight
-                if weight < 0:
-                    roomData = data
-                    break
+            currentRoom = mandatoryRooms[ri].newRoom()
         
-        if roomData == None:
-            roomData = RoomTableData(Room, 0, 0, 0)
-        
-        currentRoom = roomData.newRoom()
         rng = random.Random()
         roomSeed = random.randrange(sys.maxsize)
         rng.seed(roomSeed)
         
         while attempts < 128:
+            # If this room isn't mandatory and we're still trying, try to generate a new room altogether.
+            # This was done because sometimes it would try to generate multiple boss rooms when a second
+            # is physically impossible. One particular use case ended up with there being only one room
+            # because of this, which really fucks with code later on.
+            if ri >= len(mandatoryRooms) and attempts % 8 == 0:
+                currentRoom = getWeightedRoom(totalWeight).newRoom()
+            
             currentRoom.generate(rng)
             
             if ri > 0:
@@ -419,7 +437,7 @@ def main():
                 if intersection:
                     attempts += 1
                     continue
-                
+            
             rooms[ri] = currentRoom
             maxDoors[ri] = currentRoom.maxDoors
             
@@ -432,7 +450,7 @@ def main():
             if PRINT_AFTER_EVERY_ROOM:
                 printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
             break
-            
+        
         if attempts == 128:
             print("Took too long to generate a room")
             roomCount = ri
@@ -577,7 +595,7 @@ def main():
             hEndTile = tunnelTile
             
             attempts = 0
-
+            
             # TODO make algorithm smarter
             # TODO implement an optional diagonal tunnel
             # NOTE: If the attempt count is too low, it will still intersect some rooms even if it doesn't have to.
