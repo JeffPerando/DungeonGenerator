@@ -10,7 +10,7 @@ import time
 # Configuration #
 #################
 
-USE_CUSTOM_SEED     = True
+USE_CUSTOM_SEED     = False
 CUSTOM_SEED         = 1337420
 
 solidTile           = '#'
@@ -21,31 +21,32 @@ bossWallTile        = '?'
 bossTile            = '@'
 chestTile           = '$'
 monsterTile         = '~'
-
-PRINT_TO_FILE       = False
-FILE_NAME           = "dungeonBossTest4.txt"
-
-MIN_ROOM_HEIGHT             = 3#5
-MIN_ROOM_WIDTH              = 3#5
-MAX_ROOM_HEIGHT             = 6#8
-MAX_ROOM_WIDTH              = 6#8
-
-MIN_BOSS_RADIUS             = 6.5
-MAX_BOSS_RADIUS             = 14.5
-
-WORLD_HEIGHT                = 48
-WORLD_WIDTH                 = 48
-
-ROOM_COUNT                  = 16#96
-
-MIN_CHEST_COUNT             = 0
-MAX_CHEST_COUNT             = 3
-
-MIN_MONSTER_COUNT           = 1
-MAX_MONSTER_COUNT           = 2
+stairTile           = '/'
 
 BENCHMARK           = False
 BENCHMARK_RUNS      = 10
+
+PRINT_TO_FILE       = False
+FILE_NAME           = "dungeonTest142.txt"
+
+MIN_ROOM_HEIGHT     = 3
+MIN_ROOM_WIDTH      = 3
+MAX_ROOM_HEIGHT     = 6
+MAX_ROOM_WIDTH      = 6
+
+MIN_BOSS_RADIUS     = 6.5
+MAX_BOSS_RADIUS     = 14.5
+
+WORLD_HEIGHT        = 256
+WORLD_WIDTH         = 48
+
+ROOM_COUNT          = 16
+
+MIN_CHEST_COUNT     = 0
+MAX_CHEST_COUNT     = 3
+
+MIN_MONSTER_COUNT   = 1
+MAX_MONSTER_COUNT   = 2
 
 # These disable the effect the feature has on the world,
 # but doesn't outright disable the feature entirely. Generation
@@ -57,10 +58,10 @@ FEATURE_ROOM_DECOR  = True
 
 # Debugs dungeon generation itself. After generation,
 # the finished dungeon will be printed out in the console.
-PRINT_FINAL_DUNGEON         = True
+PRINT_FINAL_DUNGEON = True
 
-PRINT_AFTER_EVERY_ROOM      = False
-PRINT_AFTER_EVERY_PATH      = False
+PRINT_EVERY_ROOM    = False
+PRINT_EVERY_PATH    = False
 
 # Debugs room generation
 DEBUG_ROOM_GEN      = False
@@ -260,7 +261,7 @@ class Room:
         
         self.decor = {}
         self.chestCount = rng.randrange(MIN_CHEST_COUNT, MAX_CHEST_COUNT)
-        self.monsterCount = rng.randrange(MIN_CHEST_COUNT, MAX_MONSTER_COUNT)
+        self.monsterCount = rng.randrange(MIN_MONSTER_COUNT, MAX_MONSTER_COUNT)
         
         for i in range(self.monsterCount):
             coords = (rng.randrange(self.bounds[TOP], self.bounds[BOTTOM]), rng.randrange(self.bounds[LEFT], self.bounds[RIGHT]))
@@ -276,6 +277,15 @@ class Room:
     def populateDecor(self, world):
         for coords in self.decor:
             world[coords[0]][coords[1]] = self.decor[coords]
+
+    def addStairs(self, world):
+        y = random.randrange(self.bounds[TOP] + 1, self.bounds[BOTTOM] - 1)
+        x = random.randrange(self.bounds[LEFT] + 1, self.bounds[RIGHT] - 1)
+        for obj in self.decor:
+            if (y, x) == obj:
+                return False
+        world[y][x] = stairTile
+        return True
 
 class BossRoom(Room):
     def __init__(self):
@@ -349,6 +359,9 @@ class BossRoom(Room):
     
     def populateDecor(self, world):
         world[self.center[0]][self.center[1]] = bossTile
+
+    def addStairs(self, world):
+        return False
     
 class RoomTableData:
     def __init__(self, factory, wt, pwm, rank):
@@ -447,7 +460,7 @@ def main():
             if FEATURE_ROOM_DECOR:
                 currentRoom.populateDecor(world)
             
-            if PRINT_AFTER_EVERY_ROOM:
+            if PRINT_EVERY_ROOM:
                 printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
             break
         
@@ -504,14 +517,17 @@ def main():
             doorCounts[firstRoomIndex] += 1
             doorCounts[otherRoomIndex] += 1
     
-    root = 0
-    rootOptions = []
+    start = 0
+    startOptions = []
     for i in range(roomCount):
         # There will always be a room with 1 door, because there can't be a cycle in the spanning tree.
         if doorCounts[i] == 1:
-            rootOptions.append(i)
+            startOptions.append(i)
     
-    root = random.choice(rootOptions)
+    while True:
+        start = random.choice(startOptions)
+        if rooms[start].addStairs(world):
+            break
     
     if DEBUG_KRUSKAL:
         print(f"Parents: {parents}")
@@ -652,7 +668,7 @@ def main():
                 fillLineV(world, tunnelTile, startY, endY, tunnelX, vStartTile, vEndTile)
                 fillLineH(world, tunnelTile, startX, endX, tunnelY, hStartTile, hEndTile)
         
-        if PRINT_AFTER_EVERY_PATH:
+        if PRINT_EVERY_PATH:
             printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
     
     # Final step: Present
@@ -660,12 +676,12 @@ def main():
     t1 = time.time_ns()
     timeElapsed = (t1 - t0) / 1000000
     
+    if BENCHMARK:
+        print(f"Dungeon generated in {timeElapsed} ms")
+        return timeElapsed
+    
     if PRINT_FINAL_DUNGEON:
         printWorld(world, WORLD_HEIGHT, WORLD_WIDTH)
-    
-    if BENCHMARK:
-        print(f"Dungeon generated in {timeElapsed}")
-        return timeElapsed
     
     if PRINT_TO_FILE:
         with open(FILE_NAME, 'wt') as f:
@@ -683,6 +699,6 @@ if BENCHMARK:
         totalTime += timeTaken
     
     avgTime = (totalTime / BENCHMARK_RUNS)
-    print(f"Average time: {avgTime}")
+    print(f"Average time: {avgTime} ms")
 else:
     main()
